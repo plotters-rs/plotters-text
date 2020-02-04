@@ -10,6 +10,7 @@ enum PixelState {
     VLine,
     Cross,
     Pixel,
+    Filled,
     Text(char),
     Circle(bool),
 }
@@ -29,7 +30,8 @@ impl PixelState {
                 } else {
                     'O'
                 }
-            }
+            },
+            Self::Filled => '█',
         }
     }
 
@@ -37,6 +39,8 @@ impl PixelState {
         let next_state = match (*self, new_state) {
             (Self::HLine, Self::VLine) => Self::Cross,
             (Self::VLine, Self::HLine) => Self::Cross,
+            (Self::Filled, _) => Self::Filled,
+            (_, Self::Filled) => Self::Filled,
             (_, Self::Circle(what)) => Self::Circle(what),
             (Self::Circle(what), _) => Self::Circle(what),
             (_, Self::Pixel) => Self::Pixel,
@@ -48,13 +52,25 @@ impl PixelState {
     }
 }
 
-pub struct TextDrawingBackend(Vec<PixelState>);
+pub struct TextDrawingBackend {
+    size: (u32, u32),
+    data: Vec<PixelState>
+}
+
+impl TextDrawingBackend {
+    pub fn new(width: u32, height: u32) -> TextDrawingBackend {
+        TextDrawingBackend {
+            size: (width, height),
+            data: vec![PixelState::Empty; (width * height) as usize],
+        }
+    }
+}
 
 impl DrawingBackend for TextDrawingBackend {
     type ErrorType = std::io::Error;
 
     fn get_size(&self) -> (u32, u32) {
-        (100, 30)
+        self.size
     }
 
     fn ensure_prepared(&mut self) -> Result<(), DrawingErrorKind<std::io::Error>> {
@@ -62,10 +78,10 @@ impl DrawingBackend for TextDrawingBackend {
     }
 
     fn present(&mut self) -> Result<(), DrawingErrorKind<std::io::Error>> {
-        for r in 0..30 {
+        for r in 0..self.size.1 {
             let mut buf = String::new();
-            for c in 0..100 {
-                buf.push(self.0[r * 100 + c].to_char());
+            for c in 0..self.size.0 {
+                buf.push(self.data[(r * self.size.0 + c) as usize].to_char());
             }
             println!("{}", buf);
         }
@@ -75,12 +91,35 @@ impl DrawingBackend for TextDrawingBackend {
 
     fn draw_pixel(
         &mut self,
-        pos: (i32, i32),
+        mut pos: (i32, i32),
         color: BackendColor,
     ) -> Result<(), DrawingErrorKind<std::io::Error>> {
+        pos.0 = pos.0.max(0).min(self.size.0 as i32);
+        pos.1 = pos.1.max(0).min(self.size.1 as i32);
         if color.alpha > 0.3 {
-            self.0[(pos.1 * 100 + pos.0) as usize].update(PixelState::Pixel);
+            self.data[(pos.1 * self.size.0 as i32 + pos.0) as usize].update(PixelState::Pixel);
         }
+        Ok(())
+    }
+    
+    fn draw_rect<S: BackendStyle>(
+        &mut self,
+        mut upper_left: (i32, i32),
+        mut bottom_right: (i32, i32),
+        style: &S,
+        fill: bool,
+    ) -> Result<(), DrawingErrorKind<Self::ErrorType>> {
+        upper_left.0 = upper_left.0.max(0).min(self.size.0 as i32);
+        upper_left.1 = upper_left.1.max(0).min(self.size.1 as i32);
+        bottom_right.0 = bottom_right.0.max(0).min(self.size.0 as i32 - 1);
+        bottom_right.1 = bottom_right.1.max(0).min(self.size.1 as i32 - 1);
+
+        for x in upper_left.0..=bottom_right.0 {
+            for y in upper_left.1..=bottom_right.1 {
+                self.data[(y * self.size.0 as i32 + x) as usize].update(PixelState::Filled);
+            }
+        }
+
         Ok(())
     }
 
@@ -92,20 +131,20 @@ impl DrawingBackend for TextDrawingBackend {
     ) -> Result<(), DrawingErrorKind<Self::ErrorType>> {
         if from.0 == to.0 {
             let x = from.0;
-            let y0 = from.1.min(to.1);
-            let y1 = from.1.max(to.1);
+            let y0 = from.1.min(to.1).max(0).min(self.size.1 as i32);
+            let y1 = from.1.max(to.1).max(0).min(self.size.1 as i32);
             for y in y0..y1 {
-                self.0[(y * 100 + x) as usize].update(PixelState::VLine);
+                self.data[(y * self.size.0 as i32 + x) as usize].update(PixelState::VLine);
             }
             return Ok(());
         }
 
         if from.1 == to.1 {
             let y = from.1;
-            let x0 = from.0.min(to.0);
-            let x1 = from.0.max(to.0);
+            let x0 = from.0.min(to.0).max(0).min(self.size.0 as i32);
+            let x1 = from.0.max(to.0).max(0).min(self.size.0 as i32);
             for x in x0..x1 {
-                self.0[(y * 100 + x) as usize].update(PixelState::HLine);
+                self.data[(y * self.size.0 as i32 + x) as usize].update(PixelState::HLine);
             }
             return Ok(());
         }
@@ -139,9 +178,11 @@ impl DrawingBackend for TextDrawingBackend {
             VPos::Center => -height / 2,
             VPos::Bottom => -height,
         };
-        let offset = (pos.1 + dy).max(0) * 100 + (pos.0 + dx).max(0);
+        let offset = (pos.1 + dy).max(0) * self.size.0 as i32 + (pos.0 + dx).max(0);
         for (idx, chr) in (offset..).zip(text.chars()) {
-            self.0[idx as usize].update(PixelState::Text(chr));
+            if (idx as usize) < self.data.len() {
+                self.data[idx as usize].update(PixelState::Text(chr));
+            }
         }
         Ok(())
     }
