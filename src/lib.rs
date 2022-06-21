@@ -106,8 +106,8 @@ impl DrawingBackend for TextDrawingBackend {
         &mut self,
         mut upper_left: (i32, i32),
         mut bottom_right: (i32, i32),
-        style: &S,
-        fill: bool,
+        _style: &S,
+        _fill: bool,
     ) -> Result<(), DrawingErrorKind<Self::ErrorType>> {
         upper_left.0 = upper_left.0.max(0).min(self.size.0 as i32);
         upper_left.1 = upper_left.1.max(0).min(self.size.1 as i32);
